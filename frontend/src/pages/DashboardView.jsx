@@ -991,19 +991,20 @@ const DashboardView = ({ analytics, categoriesList = [], refreshData, setActiveT
               const validated = cat.validated_count || 0;
               const isReady = validated >= threshold;
               const barWidth = Math.min(100, Math.round((validated / threshold) * 100));
-              const catId = cat.id || cat.category_id;
+              const catId = cat.category_id || cat.id;
+              const catName = cat.class_name || cat.name || 'Category';
               
               return (
                 <div key={catId} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', fontWeight: 600 }}>
-                    <span style={{ color: 'var(--color-text-main)' }}>{cat.name}</span>
+                    <span style={{ color: 'var(--color-text-main)' }}>{catName}</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ color: isReady ? '#16A34A' : '#D97706' }}>
                         {isReady ? '✓ Active' : `${validated} / ${threshold}`}
                       </span>
                       <button
                         type="button"
-                        onClick={() => handleRemoveCategory(catId, cat.name)}
+                        onClick={() => handleRemoveCategory(catId, catName)}
                         style={{
                           background: 'none',
                           border: 'none',

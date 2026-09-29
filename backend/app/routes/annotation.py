@@ -370,13 +370,35 @@ def create_annotation(
     # 8. Generate full structured annotation JSON export
     _export_image_annotation_json(body.image_id, db)
 
+    # 9. Award reward points to user for valid annotation
+    points_awarded = 15
+    if current_user:
+        current_user.reward_points = (current_user.reward_points or 0) + points_awarded
+        if image_rec:
+            image_rec.reward_given = True
+            image_rec.credits_awarded = (image_rec.credits_awarded or 0) + points_awarded
+            db.add(image_rec)
+
+        from app.models.user import RewardTransaction
+        tx = RewardTransaction(
+            user_id=current_user.user_id,
+            points=points_awarded,
+            description=f"Earned points for completing valid annotation for image {image_rec.original_filename if image_rec else body.image_id}"
+        )
+        db.add(tx)
+        db.commit()
+        db.refresh(current_user)
+
     logger.info(
-        "ANNOTATION_CREATED | annotation_id=%s | image_id=%s | type=%s | user=%s | ai=%s",
+        "ANNOTATION_CREATED | annotation_id=%s | image_id=%s | type=%s | user=%s | ai=%s | points=%s",
         new_annotation.annotation_id, body.image_id, ann_type,
-        current_user.user_id, body.ai_generated,
+        current_user.user_id if current_user else "anonymous", body.ai_generated, points_awarded
     )
 
-    return _annotation_to_dict(new_annotation)
+    res_dict = _annotation_to_dict(new_annotation)
+    res_dict["reward_points_awarded"] = points_awarded
+    res_dict["user_reward_points"] = current_user.reward_points if current_user else 0
+    return res_dict
 
 
 # ---------------------------------------------------------------------------

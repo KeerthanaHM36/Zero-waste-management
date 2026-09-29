@@ -127,8 +127,8 @@ def init_db_and_seed():
                     full_name="Keerthana H M",
                     role="user",
                     is_email_verified=True,
-                    reward_points=320,
-                    image_count=128
+                    reward_points=0,
+                    image_count=0
                 )
                 db.add(demo_user)
             else:
@@ -138,17 +138,19 @@ def init_db_and_seed():
 
             db.commit()
 
-            # Seed Default Categories if table is empty
-            if db.query(Category).count() == 0:
-                default_categories = [
-                    {"name": "Plastic", "code": 101, "desc": "Plastic bottles, containers, and packaging"},
-                    {"name": "Paper & Cardboard", "code": 102, "desc": "Paper sheets, magazines, boxes, and cardboard"},
-                    {"name": "Metal", "code": 103, "desc": "Aluminum cans, tin foil, and metal objects"},
-                    {"name": "Glass", "code": 104, "desc": "Glass bottles, jars, and glass products"},
-                    {"name": "Organic Waste", "code": 105, "desc": "Food waste, compostable organic materials"},
-                    {"name": "E-Waste", "code": 106, "desc": "Electronic components and small appliances"},
-                ]
-                for cat_data in default_categories:
+            # Seed Default Categories if missing
+            default_categories = [
+                {"name": "Plastic", "code": 101, "desc": "Plastic bottles, containers, and packaging"},
+                {"name": "Paper & Cardboard", "code": 102, "desc": "Paper sheets, magazines, boxes, and cardboard"},
+                {"name": "Metal", "code": 103, "desc": "Aluminum cans, tin foil, and metal objects"},
+                {"name": "Glass", "code": 104, "desc": "Glass bottles, jars, and glass products"},
+                {"name": "Organic Waste", "code": 105, "desc": "Food waste, compostable organic materials"},
+                {"name": "E-Waste", "code": 106, "desc": "Electronic components and small appliances"},
+            ]
+            existing_names = {c.class_name.lower() for c in db.query(Category).all()}
+            existing_codes = {c.class_code for c in db.query(Category).all()}
+            for cat_data in default_categories:
+                if cat_data["name"].lower() not in existing_names and cat_data["code"] not in existing_codes:
                     db.add(Category(
                         class_name=cat_data["name"],
                         class_code=cat_data["code"],
@@ -163,14 +165,23 @@ def init_db_and_seed():
 
             db.commit()
 
-            # Ensure dataset folder structure exists for all active categories under uploads/dataset/{category_slug}/
-            from app.services.lifecycle_service import slugify_category_name
+            # Ensure dataset folder structure exists for all active categories & clean orphan folders
+            from app.services.lifecycle_service import slugify_category_name, sync_dataset_folders_with_db
+
             all_cats = db.query(Category).all()
-            for cat in all_cats:
-                slug = slugify_category_name(cat.class_name)
-                cat_dir = os.path.join(settings.UPLOAD_FOLDER, "dataset", slug)
+            valid_slugs = {slugify_category_name(cat.class_name) for cat in all_cats}
+            valid_slugs.add("general")  # preserve fallback general folder
+
+            dataset_root = os.path.join(settings.UPLOAD_FOLDER, "dataset")
+            os.makedirs(dataset_root, exist_ok=True)
+
+            for slug in valid_slugs:
+                cat_dir = os.path.join(dataset_root, slug)
                 os.makedirs(os.path.join(cat_dir, "images"), exist_ok=True)
                 os.makedirs(os.path.join(cat_dir, "labels"), exist_ok=True)
+
+            # Clean orphan dataset folders on disk
+            sync_dataset_folders_with_db(db)
 
         except Exception as e:
             db.rollback()

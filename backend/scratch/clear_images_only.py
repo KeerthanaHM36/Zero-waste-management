@@ -64,7 +64,6 @@ def clear_images_data():
 
     # Re-create empty directory structure
     os.makedirs(os.path.join(uploads_dir, "temporary"), exist_ok=True)
-    os.makedirs(os.path.join(uploads_dir, "permanent"), exist_ok=True)
     os.makedirs(os.path.join(uploads_dir, "dataset"), exist_ok=True)
     print("Uploads folder cleared and clean structure recreated!")
 

@@ -65,9 +65,9 @@ def clear_all_data():
             except Exception as e:
                 print(f"Error deleting {item_path}: {e}")
 
-    # Re-create empty temporary and permanent subdirectories
+    # Re-create empty temporary and dataset subdirectories
     os.makedirs(os.path.join(uploads_dir, "temporary"), exist_ok=True)
-    os.makedirs(os.path.join(uploads_dir, "permanent"), exist_ok=True)
+    os.makedirs(os.path.join(uploads_dir, "dataset"), exist_ok=True)
     print("Uploads folder cleared and clean directory structure re-created!")
 
     print("\n--- ALL DATABASE DATA & UPLOADS CLEARED SUCCESSFULLY ---")

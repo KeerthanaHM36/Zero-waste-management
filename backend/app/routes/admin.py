@@ -60,6 +60,8 @@ def admin_login(login_in: UserLogin, db: Session = Depends(get_db)):
     # Clean up any legacy admin rows from users table so users table contains no admin data
     legacy_user = db.query(User).filter(func.lower(User.email) == req_email).first()
     if legacy_user:
+        from app.models.user import RewardTransaction
+        db.query(RewardTransaction).filter(RewardTransaction.user_id == legacy_user.user_id).delete(synchronize_session=False)
         db.delete(legacy_user)
         db.commit()
             
@@ -192,8 +194,33 @@ def update_category(category_id: int, category_in: CategoryUpdate, admin: User =
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
 
-    if category_in.class_name is not None:
+    from app.services.lifecycle_service import slugify_category_name
+    import shutil
+
+    old_slug = slugify_category_name(category.class_name)
+
+    if category_in.class_name is not None and category_in.class_name != category.class_name:
         category.class_name = category_in.class_name
+        new_slug = slugify_category_name(category.class_name)
+        if old_slug != new_slug:
+            old_dir = os.path.join(settings.UPLOAD_FOLDER, "dataset", old_slug)
+            new_dir = os.path.join(settings.UPLOAD_FOLDER, "dataset", new_slug)
+            if os.path.exists(old_dir):
+                try:
+                    if os.path.exists(new_dir):
+                        for sub in ["images", "labels"]:
+                            old_sub = os.path.join(old_dir, sub)
+                            new_sub = os.path.join(new_dir, sub)
+                            if os.path.exists(old_sub):
+                                os.makedirs(new_sub, exist_ok=True)
+                                for f in os.listdir(old_sub):
+                                    shutil.move(os.path.join(old_sub, f), os.path.join(new_sub, f))
+                        shutil.rmtree(old_dir, ignore_errors=True)
+                    else:
+                        shutil.move(old_dir, new_dir)
+                except Exception as exc:
+                    logger.warning(f"Could not rename dataset directory from {old_slug} to {new_slug}: {exc}")
+
     if category_in.class_code is not None:
         category.class_code = category_in.class_code
     if category_in.description is not None:
@@ -203,45 +230,74 @@ def update_category(category_id: int, category_in: CategoryUpdate, admin: User =
 
     db.commit()
     db.refresh(category)
+
+    # Ensure new folder structure exists
+    try:
+        new_slug = slugify_category_name(category.class_name)
+        cat_dir = os.path.join(settings.UPLOAD_FOLDER, "dataset", new_slug)
+        os.makedirs(os.path.join(cat_dir, "images"), exist_ok=True)
+        os.makedirs(os.path.join(cat_dir, "labels"), exist_ok=True)
+    except Exception:
+        pass
+
     return {
         "message": "Category updated successfully",
         "category_id": category.category_id,
+        "class_name": category.class_name,
         "is_active": category.is_active
     }
 
 
 @router.delete("/categories/{category_id}", response_model=dict)
-def delete_category(category_id: int, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
-    category = db.query(Category).filter(Category.category_id == category_id).first()
+def delete_category(category_id: str, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    category = None
+    if str(category_id).isdigit():
+        category = db.query(Category).filter(Category.category_id == int(category_id)).first()
+
     if not category:
-        raise HTTPException(status_code=404, detail="Category not found")
+        from app.services.lifecycle_service import slugify_category_name
+        target_str = str(category_id).lower()
+        for cat in db.query(Category).all():
+            if (
+                cat.class_name.lower() == target_str
+                or slugify_category_name(cat.class_name) == target_str
+                or str(cat.category_id) == str(category_id)
+            ):
+                category = cat
+                break
+
+    from app.services.lifecycle_service import delete_dataset_category_folder, sync_dataset_folders_with_db
+
+    if not category:
+        # If DB record doesn't exist or was deleted, still aggressively purge folder from disk!
+        delete_dataset_category_folder(str(category_id))
+        sync_dataset_folders_with_db(db)
+        return {
+            "message": f"Category folder '{category_id}' deleted from file structure",
+            "category_id": category_id
+        }
 
     cat_name = category.class_name
-    from app.services.lifecycle_service import slugify_category_name
+    cat_db_id = category.category_id
     from app.models.annotation import Annotation
 
-    category_slug = slugify_category_name(cat_name)
+    # 1. Delete matching category folder from disk file structure
+    delete_dataset_category_folder(cat_name)
 
-    # Safely clear FK references from annotations and images before deletion
-    db.query(Annotation).filter(Annotation.category_id == category_id).update({"category_id": None}, synchronize_session=False)
-    db.query(Image).filter(Image.selected_category_id == category_id).update({"selected_category_id": None}, synchronize_session=False)
+    # 2. Safely clear FK references from annotations and images before deletion
+    db.query(Annotation).filter(Annotation.category_id == cat_db_id).update({"category_id": None}, synchronize_session=False)
+    db.query(Image).filter(Image.selected_category_id == cat_db_id).update({"selected_category_id": None}, synchronize_session=False)
 
     db.delete(category)
     db.commit()
 
-    # Delete corresponding folder from uploads/dataset/{category_slug}
-    try:
-        cat_dir = os.path.join(settings.UPLOAD_FOLDER, "dataset", category_slug)
-        if os.path.exists(cat_dir):
-            import shutil
-            shutil.rmtree(cat_dir, ignore_errors=True)
-            logger.info(f"Deleted dataset folder for category '{cat_name}' at {cat_dir}")
-    except Exception as exc:
-        logger.warning(f"Could not delete dataset directory for category '{cat_name}': {exc}")
+    # 3. Purge target folder & any orphan category folders from disk file structure
+    delete_dataset_category_folder(cat_name)
+    sync_dataset_folders_with_db(db)
 
     return {
         "message": f"Category '{cat_name}' deleted successfully",
-        "category_id": category_id
+        "category_id": cat_db_id
     }
 
 
